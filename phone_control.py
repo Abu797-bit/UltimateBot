@@ -1,6 +1,6 @@
 # phone_control.py — control your trading bot from Telegram on Render
 # Commands: /startbot  /stopbot  /status  /tail  /whoami  /cmd
-# Requirements: pyTelegramBotAPI, requests
+# Requirements: pyTelegramBotAPI, requests (+ whatever ultimate_bot_v3p1.py needs)
 #
 # On Render:
 #   - Service type: Web Service (Free plan)
@@ -143,7 +143,8 @@ def _load_secrets():
         sys.exit(1)
     masked = token[:8] + "..." if len(token) >= 8 else "***"
     print(
-        f"[SECRETS] Loaded token from {src} = {masked}  ALLOWED_CHAT_IDS={sorted(allowed)}")
+        f"[SECRETS] Loaded token from {src} = {masked}  ALLOWED_CHAT_IDS={sorted(allowed)}"
+    )
     return token, allowed
 
 
@@ -346,7 +347,7 @@ def _help(message):
         "• /status – show if running\n"
         "• /tail – last 60 log lines\n"
         "• /whoami – show your chat id\n"
-        "• /cmd – show WORKDIR, CMD, LOG_PATH\n",
+        "• /cmd – show WORKDIR, CMD, and log path\n",
     )
 
 
@@ -445,7 +446,8 @@ def _poll_with_409_retry():
             if e.error_code == 409:
                 attempts += 1
                 print(
-                    "[TG] 409 Conflict: another getUpdates is active for this token.")
+                    "[TG] 409 Conflict: another getUpdates is active for this token."
+                )
                 _ensure_no_webhook()
                 if attempts >= 3:
                     print(
