@@ -1,6 +1,6 @@
 # phone_control.py — control your trading bot from Telegram on Render
 # Commands: /startbot  /stopbot  /status  /tail  /whoami  /cmd
-# Requirements: pyTelegramBotAPI, requests (+ whatever ultimate_bot_v3p1.py needs)
+# Requirements: pyTelegramBotAPI, requests
 #
 # On Render:
 #   - Service type: Web Service (Free plan)
@@ -9,6 +9,10 @@
 #   - Environment variables:
 #       TELEGRAM_TOKEN        = <your bot token from BotFather>
 #       TELEGRAM_ALLOWED_CHAT = <comma-separated chat IDs, e.g. "123456789,987654321">
+#
+#   For OANDA live / practice (used by ultimate_bot_v3p1.py):
+#       OANDA_API_KEY     = <your OANDA REST API token>
+#       OANDA_ACCOUNT_ID  = <your OANDA account id>
 
 import os
 import sys
@@ -35,12 +39,17 @@ HERE = Path(__file__).resolve().parent
 WORKDIR = HERE  # keep as Path; convert to str when passing to subprocess
 
 # Command to launch your trading bot from WORKDIR
+# NOTE:
+#   --live       -> OANDA live/practice mode
+#   --dry-run    -> "False" = real orders, "True" = paper mode
+#   Adjust symbols as you wish.
 BOT_CMD = [
     "python", "-u", "ultimate_bot_v3p1.py",
-    "--live-csv",
-    # use current working dir (WORKDIR) on Render
+    "--live",
+    "--symbols", "EURUSD,GBPUSD,XAUUSD",
+    "--gran", "M5",
+    "--dry-run", "False",        # WARNING: False = send real orders
     "--data-dir", ".",
-    "--prefer-csv", "*_oanda_M5.csv",
     "--log-level", "INFO",
 ]
 
@@ -143,13 +152,14 @@ def _load_secrets():
         sys.exit(1)
     masked = token[:8] + "..." if len(token) >= 8 else "***"
     print(
-        f"[SECRETS] Loaded token from {src} = {masked}  ALLOWED_CHAT_IDS={sorted(allowed)}"
-    )
+        f"[SECRETS] Loaded token from {src} = {masked}  ALLOWED_CHAT_IDS={sorted(allowed)}")
     return token, allowed
 
 
 TELEGRAM_TOKEN, ALLOWED_CHAT_IDS = _load_secrets()
-bot = telebot.TeleBot(TELEGRAM_TOKEN, parse_mode="Markdown")
+
+# Turn off global Markdown to avoid 400 "can't parse entities" issues
+bot = telebot.TeleBot(TELEGRAM_TOKEN, parse_mode=None)
 
 # ---------- Single instance lock ----------
 
@@ -211,6 +221,7 @@ def _stream_output(chat_id: int, proc: subprocess.Popen):
                 break
             line = line.rstrip("\n")
             if LINE_FILTER.search(line):
+                # keep simple text; triple backticks will just show literally
                 _send_async(chat_id, f"```text\n{line}\n```")
             if STOP_EVENT.is_set():
                 break
@@ -218,7 +229,7 @@ def _stream_output(chat_id: int, proc: subprocess.Popen):
         _send_async(chat_id, f"stream error: {e}")
     finally:
         code = proc.poll()
-        _send_async(chat_id, f"`[child exited] code={code}`")
+        _send_async(chat_id, f"[child exited] code={code}")
 
 # ---------- Bot process control ----------
 
@@ -341,19 +352,21 @@ def _help(message):
         return
     bot.reply_to(
         message,
-        "Commands:\n"
-        "• /startbot – start the bot\n"
-        "• /stopbot – stop the bot\n"
-        "• /status – show if running\n"
-        "• /tail – last 60 log lines\n"
-        "• /whoami – show your chat id\n"
-        "• /cmd – show WORKDIR, CMD, and log path\n",
+        (
+            "Commands:\n"
+            "/startbot  – start the bot\n"
+            "/stopbot   – stop the bot\n"
+            "/status    – show if running\n"
+            "/tail      – last 60 log lines\n"
+            "/whoami    – show your chat id\n"
+            "/cmd       – show WORKDIR, CMD, LOG PATH\n"
+        ),
     )
 
 
 @bot.message_handler(commands=["whoami"])
 def _whoami(message):
-    bot.reply_to(message, f"Your chat id: `{message.chat.id}`")
+    bot.reply_to(message, f"Your chat id: {message.chat.id}")
 
 
 @bot.message_handler(commands=["cmd"])
@@ -361,9 +374,9 @@ def _cmd(message):
     if not _authorized(message):
         return
     info = (
-        f"WORKDIR: `{WORKDIR}`\n"
-        f"CMD: `{' '.join(BOT_CMD)}`\n"
-        f"LOG_PATH: `{LOG_PATH}`\n"
+        f"WORKDIR: {WORKDIR}\n"
+        f"CMD: {' '.join(BOT_CMD)}\n"
+        f"LOG_PATH: {LOG_PATH}\n"
     )
     bot.reply_to(message, info)
 
@@ -446,15 +459,14 @@ def _poll_with_409_retry():
             if e.error_code == 409:
                 attempts += 1
                 print(
-                    "[TG] 409 Conflict: another getUpdates is active for this token."
-                )
+                    "[TG] 409 Conflict: another getUpdates is active for this token.")
                 _ensure_no_webhook()
                 if attempts >= 3:
                     print(
                         "\n*** ACTION REQUIRED ***\n"
                         "Another process is polling this bot token.\n"
                         "1) Stop any other python/PM2/servers using this token.\n"
-                        "2) Or /revoke the token with BotFather and update TELEGRAM_TOKEN.\n"
+                        "2) Or revoke the token with BotFather and update TELEGRAM_TOKEN.\n"
                     )
                     raise
                 time.sleep(5)
